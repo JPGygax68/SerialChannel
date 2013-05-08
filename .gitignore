@@ -1,0 +1,101 @@
+# 
+# Filename: .gitignore
+# Date:     Sunday 5/29/2011
+# Author:   Mike Hanley (mike@hanleysw.com)
+#
+# Customized by Hans-Peter Gygax (gygax@practicomp.ch)
+
+# Description: 
+# The file tells git what files to ignore during add and commit
+# operations. This has been optimized for development using 
+# Microsoft Visual Studio 2010.
+#
+
+#-- My filters ----------------------------------
+
+#
+# Module-specific exclusions
+#
+
+#
+# Output and test folders
+#
+bin/*
+bindbg/*
+
+lib/*
+
+#
+# Others
+#
+*.orig
+*.old
+*.backup
+*.exp
+*.csv
+*.backup
+Backup_*.cdr
+
+#-- Original filters ----------------------------
+ 
+#
+# Windows and Mac OS X Temp Cache Files
+#
+[Tt]humbs.db
+*.DS_Store
+ 
+#
+#Visual Studio files
+#
+*.[Oo]bj
+*.user
+*.aps
+*.pch
+*.vspscc
+*.vssscc
+*_i.c
+*_p.c
+*.ncb
+*.suo
+*.tlb
+*.tlh
+*.bak
+*.[Cc]ache
+*.ilk
+*.log
+*.lib
+*.sbr
+*.sdf
+*.opensdf
+*.~*
+*.*~
+ipch/
+obj/
+[Bb]in
+[Dd]ebug*/
+[Rr]elease*/
+ 
+#
+#Tooling
+#
+_ReSharper*/
+*.resharper
+[Tt]est[Rr]esult*
+ 
+#
+#Project files
+#
+# 2012-01-10 removed because GLEW uses it for projects files and solutions
+#[Bb]uild/
+ 
+#
+#Subversion files
+#
+.svn
+ 
+#
+# Microsoft Office Temp Files
+#
+~$*
+ 
+# End of File
