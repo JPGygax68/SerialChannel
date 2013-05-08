@@ -10,7 +10,7 @@ public:
 
     typedef unsigned char byte_t;
 
-    SerialChannel(const char *def);
+    SerialChannel(const std::string &def);
 
     void                        open     ();
     void                        close    ();

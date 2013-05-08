@@ -66,7 +66,7 @@ private:
 
 //--- MAIN CLASS IMPLEMENTATION -----------------------------------------------
 
-SerialChannel::SerialChannel(const char *def_)
+SerialChannel::SerialChannel(const string &def_)
     :def(def_)
 {
     _intern = new InternalStruct(this);
