@@ -159,12 +159,7 @@ SerialChannel::open()
     memset(&intern->overlapped_in , 0, sizeof(OVERLAPPED)); 
     memset(&intern->overlapped_out, 0, sizeof(OVERLAPPED)); 
 
-    /*
-    DWORD count;
-    if (ReadFile(intern->hComm, &intern->read_buffer[0], intern->read_buffer.size(), &count, &intern->overlapped_in) == 0) 
-        throw winapi_error("ReadFile() on COM port");
-    */
-
+    // Start the input and output worker threads
     intern->output_thread = thread( boost::ref(intern->output_slave) );
     intern->input_thread  = thread( boost::ref(intern->input_slave ) );
 }

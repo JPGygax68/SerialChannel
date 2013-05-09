@@ -49,15 +49,17 @@ public:
                                     [octs={on|off}][dtr={on|off|hs}][rts={on|off|hs|tg}][idsr={on|off}]
         @param input_dgram_size Specifies the number of characters that the Channel will attempt to read at a time.
                                 Specifying a small enough number is important to reduce latency (between physical 
-                                arrival of a character and the moment user code can access it). (However, smaller
+                                arrival of a character and the moment user code can access it). However, smaller
                                 numbers also increase CPU usage, context switching and/or inter-thread 
-                                synchronization.)
+                                synchronization.
      */
     SerialChannel (const std::string &filename, uint input_chunk_size = 0);
 
     /**
      *  Opens the channel for both directions. The class will start reading and buffering
-     *  incoming characters immediately (in the background).
+     *  incoming characters immediately (in the background) - be aware that this means you
+     *  should start consuming incoming characters immediately, or else risk missing input 
+     *  at some point (the input buffer does not grow).
      */
     void
     open ();
@@ -81,6 +83,7 @@ public:
     /**
      *  Retrieves characters waiting in the input buffer.
      *  @param max_chars    (optional) The maximum number of characters to retrieve in this call.
+     *  @returns            a vector of unsigned char (binary, not null-terminated)
      */
     const chunk_t 
     retrieve (size_t max_chars = 0);
