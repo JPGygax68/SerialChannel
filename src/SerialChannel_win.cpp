@@ -11,7 +11,8 @@
 using namespace std;
 using namespace boost;
 
-static const size_t BUFFER_SIZE = 256;
+static const size_t DEFAULT_BUFFER_SIZE      = 2048;
+static const size_t DEFAULT_INPUT_DGRAM_SIZE = 16;
 
 class InternalStruct {
 public:
@@ -24,8 +25,8 @@ public:
 
     InternalStruct(SerialChannel *owner_) 
       : owner(owner_), 
-        output_buffer(BUFFER_SIZE),
-        input_buffer (BUFFER_SIZE),
+        output_buffer(DEFAULT_BUFFER_SIZE),
+        input_buffer (DEFAULT_BUFFER_SIZE),
         disconnected (false),
         terminating  (false)
     { 
@@ -44,32 +45,37 @@ private:
         InternalStruct *owner;
     };
 
-    SerialChannel  *owner;
-    HANDLE          hComm;
-    OVERLAPPED      overlapped_in;
-    OVERLAPPED      overlapped_out;
-    output_buffer_t output_buffer;
-    input_buffer_t  input_buffer;
-    OutputSlave     output_slave;
-    InputSlave      input_slave;
-    thread          output_thread;
-    thread          input_thread;
-    mutex           input_mutex;
-    mutex           output_mutex;
-    bool            disconnected;
-    bool            terminating;
-    string          input_error;
-    string          output_error;
+    SerialChannel        *owner;
+    HANDLE                hComm;
+    OVERLAPPED            overlapped_in;
+    OVERLAPPED            overlapped_out;
+    output_buffer_t       output_buffer;
+    input_buffer_t        input_buffer;
+    read_buffer_t         read_buffer;
+    OutputSlave           output_slave;
+    InputSlave            input_slave;
+    thread                output_thread;
+    thread                input_thread;
+    mutex                 input_mutex;
+    mutex                 output_mutex;
+    condition_variable    input_thread_cond;
+    condition_variable    output_thread_cond;
+    bool                  disconnected;
+    bool                  terminating;
+    string                input_error;
+    string                output_error;
 
     friend class SerialChannel;
 };
 
 //--- MAIN CLASS IMPLEMENTATION -----------------------------------------------
 
-SerialChannel::SerialChannel(const string &def_)
+SerialChannel::SerialChannel(const string &def_, uint input_dgram_size_)
     :def(def_)
 {
-    _intern = new InternalStruct(this);
+    auto intern = new InternalStruct(this);
+    _intern = intern;
+    intern->read_buffer.resize(input_dgram_size_ ? input_dgram_size_ : DEFAULT_INPUT_DGRAM_SIZE);
 }
 
 void
@@ -136,7 +142,7 @@ SerialChannel::open()
     */
 
     intern->output_thread = thread( boost::ref(intern->output_slave) );
-
+    intern->input_thread  = thread( boost::ref(intern->input_slave ) );
 }
 
 void
@@ -144,6 +150,9 @@ SerialChannel::close()
 {
     auto *intern = static_cast<InternalStruct*>(_intern);
 
+    intern->terminating = true;
+    intern->input_thread_cond.notify_all();
+    intern->output_thread_cond  .notify_all();
     intern->input_thread .join();
     intern->output_thread.join();
 
@@ -155,18 +164,24 @@ SerialChannel::send(const byte_t *buffer, size_t size)
 {
     auto *intern = static_cast<InternalStruct*>(_intern);
 
+    if (intern->output_error.size() > 0) throw runtime_error(string("SerialChannel sending error: ")+intern->input_error);
+
     mutex::scoped_lock(output_mutex);
 
     if (intern->output_buffer.size() + size >= intern->output_buffer.capacity())
         throw runtime_error("Output buffer capacity exceeded");
     
     for (unsigned int i = 0; i < size; i ++) intern->output_buffer.push_front(buffer[i]);
+
+    intern->output_thread_cond.notify_all();
 }
 
 const vector<BYTE>
 SerialChannel::retrieve(size_t max_bytes)
 {
     auto *intern = static_cast<InternalStruct*>(_intern);
+
+    if (intern->input_error.size() > 0) throw runtime_error(string("SerialChannel receiving error: ")+intern->input_error);
 
     mutex::scoped_lock(input_mutex);
 
@@ -177,6 +192,8 @@ SerialChannel::retrieve(size_t max_bytes)
         buffer[i] = intern->input_buffer.back();
         intern->input_buffer.pop_back();
     }
+
+    intern->input_thread_cond.notify_all();
     
     return buffer;
 }
@@ -200,24 +217,36 @@ InternalStruct::OutputSlave::operator() ()
     //void log(int, char *,...); // TODO: remove once no longer needed
 
 	// Send all datagrams currently in the queue
-	while (! owner->terminating)
+	while (true)
 	{
         try {
-            // Check for pending outgoing bytes
+
             vector<byte_t> write_buffer;
-            {
-                // Lock the output buffer to check for pending output bytes
-                lock_guard<mutex> guard(owner->output_mutex);
-                if (owner->output_buffer.size() > 0) {
-                    // If output is pending, transfer to the write buffer
-                    write_buffer.reserve(owner->output_buffer.size());
-                    while (!owner->output_buffer.empty()) {
-                        write_buffer.push_back( owner->output_buffer.back() );
-                        owner->output_buffer.pop_back();
-                    }
+
+            // Wait for outgoing characters to become available
+            unique_lock<mutex> lock(owner->output_mutex);
+            while (true) {
+                if (owner->terminating) break;
+                if (owner->output_buffer.size() > 0) break;
+                owner->output_thread_cond.wait(lock);
+            }
+
+            // We're done here
+            if (owner->terminating) break;
+
+            // While we still hold the lock, transfer from output to write buffer
+            if (owner->output_buffer.size() > 0) {
+                write_buffer.reserve(owner->output_buffer.size());
+                while (!owner->output_buffer.empty()) {
+                    write_buffer.push_back( owner->output_buffer.back() );
+                    owner->output_buffer.pop_back();
                 }
             }
 
+            // We don't need exclusive access to write
+            lock.unlock(); 
+
+            // Got stuff to send ?
             if (write_buffer.size() > 0) {
                 OVERLAPPED ov = {0};
                 ov.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
@@ -237,7 +266,8 @@ InternalStruct::OutputSlave::operator() ()
             owner->output_error = e.what();
             break;
         }
-    }
+
+    } // working loop
 }
 
 void
@@ -246,14 +276,27 @@ InternalStruct::InputSlave::operator() ()
     OVERLAPPED ov = {0};
     ov.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 
-    try {
+    while (true) {
 
-        while (!owner->terminating) {
+        try {
+
+            // Wait until there is room in the input buffer (using a condition variable)
+            unique_lock<mutex> lock(owner->input_mutex);
+            while (true) {
+                if (owner->terminating) break;
+                if (owner->input_buffer.size() + owner->read_buffer.size() <= owner->input_buffer.capacity()) break;
+                owner->input_thread_cond.wait(lock);
+            }
+
+            // If we're closing down, exit the loop immediately
+            if (owner->terminating) break;
+
+            // We don't need exclusive access while reading
+            lock.unlock(); 
 
             // Start read operation - synchronous or asynchronous
             DWORD bytesRead = 0;
-            byte_t buffer[BUFFER_SIZE];
-            if (ReadFile(owner->hComm, buffer, BUFFER_SIZE, &bytesRead, &ov) == 0) {
+            if (ReadFile(owner->hComm, &owner->read_buffer[0], owner->read_buffer.size(), &bytesRead, &ov) == 0) {
                 DWORD last_error = GetLastError();
                 if (last_error != ERROR_IO_PENDING) {
                     // Read operation error
@@ -282,16 +325,16 @@ InternalStruct::InputSlave::operator() ()
             if (bytesRead > 0) {
                 if (owner->input_buffer.size() + bytesRead >= owner->input_buffer.capacity()) throw runtime_error("Input buffer capacity exceeded");
                 // Lock the output buffer to transmit the received bytes
-                lock_guard<mutex> guard(owner->output_mutex);
-                for (unsigned int i = 0; i < bytesRead; i ++) owner->input_buffer.push_front(buffer[i]);
+                lock_guard<mutex> guard(owner->input_mutex);
+                for (unsigned int i = 0; i < bytesRead; i ++) owner->input_buffer.push_front(owner->read_buffer[i]);
             }
 
 	    }
+        catch (const std::exception &e) {
+            owner->input_error = e.what();
+        }
 
-    }
-    catch (const std::exception &e) {
-        owner->input_error = e.what();
-    }
+    } // working loop
 
     CloseHandle(ov.hEvent);
 }
