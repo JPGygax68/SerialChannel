@@ -1,3 +1,27 @@
+/*
+The MIT License (MIT)
+
+Copyright (c) 2013 Jean-Pierre Gygax, Biel-Bienne, Switzerland
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.
+*/
+
 #include <Windows.h>
 #include <vector>
 #include <stdexcept>
@@ -12,7 +36,7 @@ using namespace std;
 using namespace boost;
 
 static const size_t DEFAULT_BUFFER_SIZE      = 2048;
-static const size_t DEFAULT_INPUT_DGRAM_SIZE = 16;
+static const size_t DEFAULT_INPUT_CHUNK_SIZE = 16;
 
 class InternalStruct {
 public:
@@ -70,12 +94,12 @@ private:
 
 //--- MAIN CLASS IMPLEMENTATION -----------------------------------------------
 
-SerialChannel::SerialChannel(const string &def_, uint input_dgram_size_)
-    :def(def_)
+SerialChannel::SerialChannel(const string &filename_, uint input_chunk_size_)
+    :filename(filename_)
 {
     auto intern = new InternalStruct(this);
     _intern = intern;
-    intern->read_buffer.resize(input_dgram_size_ ? input_dgram_size_ : DEFAULT_INPUT_DGRAM_SIZE);
+    intern->read_buffer.resize(input_chunk_size_ ? input_chunk_size_ : DEFAULT_INPUT_CHUNK_SIZE);
 }
 
 void
@@ -86,7 +110,7 @@ SerialChannel::open()
     DCB dcb = { 0 };
     COMMTIMEOUTS commTimeouts = {0};
 
-    intern->hComm = CreateFile( def.c_str(),  
+    intern->hComm = CreateFile( filename.c_str(),  
         GENERIC_READ | GENERIC_WRITE, 
         0, 
         0, 
@@ -97,7 +121,7 @@ SerialChannel::open()
 
     // Set the com port parameters
     dcb.DCBlength = sizeof(DCB);
-    string spec = def.find(':') != string::npos ? def : string("9600,n,8,1");
+    string spec = filename.find(':') != string::npos ? filename : string("9600,n,8,1");
     if(!BuildCommDCB(spec.c_str(), &dcb)) throw winapi_error("BuildCommDCB()");
     dcb.fBinary = true;
 	/*
@@ -151,8 +175,8 @@ SerialChannel::close()
     auto *intern = static_cast<InternalStruct*>(_intern);
 
     intern->terminating = true;
-    intern->input_thread_cond.notify_all();
-    intern->output_thread_cond  .notify_all();
+    intern->input_thread_cond .notify_all();
+    intern->output_thread_cond.notify_all();
     intern->input_thread .join();
     intern->output_thread.join();
 
