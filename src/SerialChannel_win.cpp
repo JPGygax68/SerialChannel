@@ -71,8 +71,6 @@ private:
 
     SerialChannel        *owner;
     HANDLE                hComm;
-    OVERLAPPED            overlapped_in;
-    OVERLAPPED            overlapped_out;
     output_buffer_t       output_buffer;
     input_buffer_t        input_buffer;
     read_buffer_t         read_buffer;
@@ -156,9 +154,6 @@ SerialChannel::open()
     PurgeComm(intern->hComm, PURGE_RXCLEAR); 
     PurgeComm(intern->hComm, PURGE_TXCLEAR);
 
-    memset(&intern->overlapped_in , 0, sizeof(OVERLAPPED)); 
-    memset(&intern->overlapped_out, 0, sizeof(OVERLAPPED)); 
-
     // Start the input and output worker threads
     intern->output_thread = thread( boost::ref(intern->output_slave) );
     intern->input_thread  = thread( boost::ref(intern->input_slave ) );
@@ -212,6 +207,7 @@ SerialChannel::retrieve(size_t max_bytes)
         intern->input_buffer.pop_back();
     }
 
+    // Inform reader thread that we just made room in the buffer
     intern->input_thread_cond.notify_all();
     
     return buffer;
@@ -236,8 +232,8 @@ InternalStruct::OutputSlave::operator() ()
     //void log(int, char *,...); // TODO: remove once no longer needed
 
 	// Send all datagrams currently in the queue
-	while (true)
-	{
+    while (true) {
+
         try {
 
             vector<byte_t> write_buffer;
