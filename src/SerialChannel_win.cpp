@@ -50,11 +50,11 @@ public:
     InternalStruct(SerialChannel *owner_) 
       : owner(owner_), 
         output_buffer(DEFAULT_BUFFER_SIZE),
-        input_buffer (DEFAULT_BUFFER_SIZE),
+        //input_buffer (DEFAULT_BUFFER_SIZE),
         disconnected (false),
         terminating  (false)
     { 
-        input_slave.owner  = this;
+        //input_slave.owner  = this;
         output_slave.owner = this;
     }
 
@@ -71,20 +71,16 @@ private:
 
     SerialChannel        *owner;
     HANDLE                hComm;
+    DCB                   saved_dcb;
+    COMMTIMEOUTS          saved_timeouts;
     output_buffer_t       output_buffer;
-    input_buffer_t        input_buffer;
     read_buffer_t         read_buffer;
     OutputSlave           output_slave;
-    InputSlave            input_slave;
     thread                output_thread;
-    thread                input_thread;
-    mutex                 input_mutex;
     mutex                 output_mutex;
-    condition_variable    input_thread_cond;
     condition_variable    output_thread_cond;
     bool                  disconnected;
     bool                  terminating;
-    string                input_error;
     string                output_error;
 
     friend class SerialChannel;
@@ -113,9 +109,13 @@ SerialChannel::open()
         0, 
         0, 
         OPEN_EXISTING,
-        FILE_FLAG_OVERLAPPED |FILE_FLAG_NO_BUFFERING,
+        0, // FILE_FLAG_OVERLAPPED, // |FILE_FLAG_NO_BUFFERING,
         0);
     if (intern->hComm == INVALID_HANDLE_VALUE) throw winapi_error("CreateFile()");
+
+    // Save current COMM state and timeouts
+    if (!GetCommState   (intern->hComm, &intern->saved_dcb     )) throw winapi_error("GetCommState() on COM port");
+    if (!GetCommTimeouts(intern->hComm, &intern->saved_timeouts)) throw winapi_error("GetCommTimeouts()");
 
     // Set the com port parameters
     dcb.DCBlength = sizeof(DCB);
@@ -143,9 +143,12 @@ SerialChannel::open()
     serialBitsPerByte += (dcb.Parity == NOPARITY  ) ? 0 : 1;
     serialBitsPerByte += (dcb.StopBits == ONESTOPBIT) ? 1 : 2;
     DWORD msPerByte = (dcb.BaudRate > 0) ? ((1000 * serialBitsPerByte+ dcb.BaudRate - 1) / dcb.BaudRate) : 1;
-    commTimeouts.ReadIntervalTimeout         = msPerByte;   // Minimize chance of concatenating of separate serial port packets on read
-    commTimeouts.ReadTotalTimeoutMultiplier  = 0;           // Do not allow big read timeout when big read buffer used
-    commTimeouts.ReadTotalTimeoutConstant    = 1000;        // Total read timeout (period of read loop)
+    //commTimeouts.ReadIntervalTimeout         = msPerByte;   // Minimize chance of concatenating separate serial port packets on read
+    commTimeouts.ReadIntervalTimeout         = MAXDWORD;    // Do not wait for incoming characters
+    //commTimeouts.ReadTotalTimeoutMultiplier  = 0;           // Do not allow big read timeout when big read buffer used
+    commTimeouts.ReadTotalTimeoutMultiplier  = 0;           // Do not wait for incoming characters
+    //commTimeouts.ReadTotalTimeoutConstant    = 1000;        // Total read timeout (period of read loop)
+    commTimeouts.ReadTotalTimeoutConstant    = 0;           // Do not wait for incoming characters
     commTimeouts.WriteTotalTimeoutConstant   = 1000;        // Const part of write timeout
     commTimeouts.WriteTotalTimeoutMultiplier = msPerByte;   // Variable part of write timeout (per byte)
     if(!SetCommTimeouts(intern->hComm, &commTimeouts)) throw winapi_error("SetCommTimeouts()");
@@ -156,7 +159,7 @@ SerialChannel::open()
 
     // Start the input and output worker threads
     intern->output_thread = thread( boost::ref(intern->output_slave) );
-    intern->input_thread  = thread( boost::ref(intern->input_slave ) );
+    //intern->input_thread  = thread( boost::ref(intern->input_slave ) );
 }
 
 void
@@ -164,13 +167,18 @@ SerialChannel::close()
 {
     auto *intern = static_cast<InternalStruct*>(_intern);
 
+    // End the slave thread
     intern->terminating = true;
-    intern->input_thread_cond .notify_all();
     intern->output_thread_cond.notify_all();
-    intern->input_thread .join();
     intern->output_thread.join();
 
+    // Restore COMM settings
+    SetCommState   (intern->hComm, &intern->saved_dcb     );
+    SetCommTimeouts(intern->hComm, &intern->saved_timeouts);
+
+    // We're done here
     if (CloseHandle(intern->hComm) == 0) throw winapi_error("CloseHandle()");
+    intern->hComm = 0;
 }
 
 void
@@ -178,7 +186,7 @@ SerialChannel::send(const byte_t *buffer, size_t size)
 {
     auto *intern = static_cast<InternalStruct*>(_intern);
 
-    if (intern->output_error.size() > 0) throw runtime_error(string("SerialChannel sending error: ")+intern->input_error);
+    if (intern->output_error.size() > 0) throw runtime_error(string("SerialChannel sending error: ")+intern->output_error);
 
     mutex::scoped_lock(output_mutex);
 
@@ -195,34 +203,48 @@ SerialChannel::retrieve(size_t max_bytes)
 {
     auto *intern = static_cast<InternalStruct*>(_intern);
 
-    if (intern->input_error.size() > 0) throw runtime_error(string("SerialChannel receiving error: ")+intern->input_error);
+    vector<BYTE> chunk;
 
-    mutex::scoped_lock(input_mutex);
+    // Read operation (will not wait because of timeout parameters)
 
-    size_t size = (max_bytes > 0) ? min(max_bytes, intern->input_buffer.size()) : intern->input_buffer.size();
-    vector<BYTE> buffer(size);
+    OVERLAPPED ov = {0};
+    ov.hEvent = CreateEvent(NULL, TRUE, FALSE, NULL);
 
-    for (unsigned int i = 0; i < size; i++) {
-        buffer[i] = intern->input_buffer.back();
-        intern->input_buffer.pop_back();
+    byte_t buffer[256];
+    DWORD bytesRead;
+    do {
+        bytesRead = 0;
+        // Start read operation
+        if (ReadFile(intern->hComm, buffer, sizeof(buffer), &bytesRead, NULL) == 0) {
+            DWORD last_error = GetLastError();
+            if (last_error != ERROR_IO_PENDING) {
+                // Read operation error
+                if (last_error == ERROR_OPERATION_ABORTED) {
+                    intern->disconnected = true;
+                }
+                else throw winapi_error("Reading from COM port (ReadFile)", last_error);
+            }
+            // Wait for async read operation completion or timeout
+            bytesRead = 0;
+            if (!GetOverlappedResult(intern->hComm, &ov, &bytesRead, TRUE)) {
+                // Read operation error
+                last_error = GetLastError();
+                if (last_error == ERROR_OPERATION_ABORTED) {
+                    intern->disconnected = true;
+                }
+                else throw winapi_error("Reading from COM port (GetOverlappedResult)", last_error);
+            }
+        }
+        else {
+            // Read operation completed synchronously
+        }
+        // Copy the bytes
+        for (uint i = 0; i < bytesRead; i ++) chunk.push_back(buffer[i]);
     }
+    while (bytesRead == sizeof(buffer));
 
-    // Inform reader thread that we just made room in the buffer
-    intern->input_thread_cond.notify_all();
-    
-    return buffer;
+    return chunk;
 }
-
-/*
-void
-SerialChannel::sendNextQueuedOutputBuffer()
-{
-    buffer_t &buffer = output_queue.back();
-
-    if (WriteFileEx(hComm, &buffer[0], buffer.size(), &overlapped_out, &writeComplete) == 0) 
-        throw winapi_error("WriteFileEx() on COM port");
-}
-*/
 
 //--- InternalStruct methods --------------------------------------------------
 
@@ -285,6 +307,7 @@ InternalStruct::OutputSlave::operator() ()
     } // working loop
 }
 
+/*
 void
 InternalStruct::InputSlave::operator() ()
 {
@@ -353,4 +376,4 @@ InternalStruct::InputSlave::operator() ()
 
     CloseHandle(ov.hEvent);
 }
-
+*/
