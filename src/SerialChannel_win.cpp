@@ -96,6 +96,12 @@ SerialChannel::SerialChannel(const string &filename_, uint input_chunk_size_)
     intern->read_buffer.resize(input_chunk_size_ ? input_chunk_size_ : DEFAULT_INPUT_CHUNK_SIZE);
 }
 
+SerialChannel::~SerialChannel() 
+{
+    auto intern = new InternalStruct(this);
+	if (intern->hComm) close();
+}
+
 void
 SerialChannel::open()
 {
@@ -109,7 +115,7 @@ SerialChannel::open()
         0, 
         0, 
         OPEN_EXISTING,
-        0, // FILE_FLAG_OVERLAPPED, // |FILE_FLAG_NO_BUFFERING,
+        FILE_FLAG_OVERLAPPED, // |FILE_FLAG_NO_BUFFERING,
         0);
     if (intern->hComm == INVALID_HANDLE_VALUE) throw winapi_error("CreateFile()");
 
@@ -215,7 +221,7 @@ SerialChannel::retrieve(size_t max_bytes)
     do {
         bytesRead = 0;
         // Start read operation
-        if (ReadFile(intern->hComm, buffer, sizeof(buffer), &bytesRead, NULL) == 0) {
+        if (ReadFile(intern->hComm, buffer, sizeof(buffer), &bytesRead, &ov) == 0) {
             DWORD last_error = GetLastError();
             if (last_error != ERROR_IO_PENDING) {
                 // Read operation error
@@ -238,8 +244,11 @@ SerialChannel::retrieve(size_t max_bytes)
         else {
             // Read operation completed synchronously
         }
-        // Copy the bytes
-        for (uint i = 0; i < bytesRead; i ++) chunk.push_back(buffer[i]);
+
+        // Copy the bytes (if any)
+		if (bytesRead > 0) {
+			for (uint i = 0; i < bytesRead; i ++) chunk.push_back(buffer[i]);
+		}
     }
     while (bytesRead == sizeof(buffer));
 
