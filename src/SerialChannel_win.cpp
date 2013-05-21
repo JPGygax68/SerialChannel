@@ -49,6 +49,7 @@ public:
 
     InternalStruct(SerialChannel *owner_) 
       : owner(owner_), 
+        hComm(0),
         output_buffer(DEFAULT_BUFFER_SIZE),
         input_buffer (DEFAULT_BUFFER_SIZE),
         disconnected (false),
@@ -177,6 +178,8 @@ SerialChannel::close()
     intern->output_thread.join();
 
     if (CloseHandle(intern->hComm) == 0) throw winapi_error("CloseHandle()");
+
+    intern->hComm = 0;
 }
 
 void
