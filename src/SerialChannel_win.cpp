@@ -100,6 +100,12 @@ SerialChannel::SerialChannel(const string &filename_, uint input_chunk_size_)
     intern->read_buffer.resize(input_chunk_size_ ? input_chunk_size_ : DEFAULT_INPUT_CHUNK_SIZE);
 }
 
+SerialChannel::~SerialChannel() 
+{
+    auto intern = new InternalStruct(this);
+	if (intern->hComm) close();
+}
+
 void
 SerialChannel::open()
 {
@@ -212,17 +218,6 @@ SerialChannel::retrieve(size_t max_bytes)
     
     return buffer;
 }
-
-/*
-void
-SerialChannel::sendNextQueuedOutputBuffer()
-{
-    buffer_t &buffer = output_queue.back();
-
-    if (WriteFileEx(hComm, &buffer[0], buffer.size(), &overlapped_out, &writeComplete) == 0) 
-        throw winapi_error("WriteFileEx() on COM port");
-}
-*/
 
 //--- InternalStruct methods --------------------------------------------------
 
@@ -344,6 +339,7 @@ InternalStruct::InputSlave::operator() ()
                 for (unsigned int i = 0; i < bytesRead; i ++) owner->input_buffer.push_front(owner->read_buffer[i]);
             }
 
+            Sleep(20);
 	    }
         catch (const std::exception &e) {
             owner->input_error = e.what();

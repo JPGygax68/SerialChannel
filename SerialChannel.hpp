@@ -55,6 +55,8 @@ public:
      */
     SerialChannel (const std::string &filename, uint input_chunk_size = 0);
 
+    ~SerialChannel();
+
     /**
      *  Opens the channel for both directions. The class will start reading and buffering
      *  incoming characters immediately (in the background) - be aware that this means you
