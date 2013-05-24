@@ -102,8 +102,11 @@ SerialChannel::SerialChannel(const string &filename_, uint input_chunk_size_)
 
 SerialChannel::~SerialChannel() 
 {
-    auto intern = new InternalStruct(this);
-	if (intern->hComm) close();
+    try {
+        auto intern = new InternalStruct(this);
+	    if (intern->hComm) close();
+    }
+    catch(...) {}
 }
 
 void
