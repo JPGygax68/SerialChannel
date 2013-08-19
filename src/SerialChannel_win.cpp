@@ -123,7 +123,7 @@ SerialChannel::open()
         0, 
         0, 
         OPEN_EXISTING,
-        FILE_FLAG_OVERLAPPED |FILE_FLAG_NO_BUFFERING,
+        FILE_FLAG_OVERLAPPED|FILE_FLAG_NO_BUFFERING,
         0);
     if (intern->hComm == INVALID_HANDLE_VALUE) throw winapi_error("CreateFile()");
 
