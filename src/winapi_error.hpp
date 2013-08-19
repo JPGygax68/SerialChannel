@@ -10,8 +10,7 @@ class winapi_error : public std::exception {
          char buffer[1024];
          if (error == 0) error = GetLastError();
          FormatMessageA(FORMAT_MESSAGE_FROM_SYSTEM, NULL, error, 
-            0,
-						//MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+            0,	//MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
             buffer, 1024, NULL);
          m_msg = m_msg + ": " + buffer;
       }
