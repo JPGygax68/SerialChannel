@@ -48,7 +48,8 @@ public:
     typedef vector<byte_t>          write_buffer_t;
 
     InternalStruct(SerialChannel *owner_) 
-      : owner(owner_), 
+      : owner(owner_),
+        hComm(NULL),
         output_buffer(DEFAULT_BUFFER_SIZE),
         input_buffer (DEFAULT_BUFFER_SIZE),
         disconnected (false),
@@ -98,6 +99,11 @@ SerialChannel::SerialChannel(const string &filename_, uint input_chunk_size_)
     auto intern = new InternalStruct(this);
     _intern = intern;
     intern->read_buffer.resize(input_chunk_size_ ? input_chunk_size_ : DEFAULT_INPUT_CHUNK_SIZE);
+}
+
+SerialChannel::~SerialChannel()
+{
+    close();
 }
 
 void
@@ -164,13 +170,17 @@ SerialChannel::close()
 {
     auto *intern = static_cast<InternalStruct*>(_intern);
 
-    intern->terminating = true;
-    intern->input_thread_cond .notify_all();
-    intern->output_thread_cond.notify_all();
-    intern->input_thread .join();
-    intern->output_thread.join();
+    if (intern->hComm)
+    {
+        intern->terminating = true;
+        intern->input_thread_cond.notify_all();
+        intern->output_thread_cond.notify_all();
+        intern->input_thread.join();
+        intern->output_thread.join();
 
-    if (CloseHandle(intern->hComm) == 0) throw winapi_error("CloseHandle()");
+        if (CloseHandle(intern->hComm) == 0) throw winapi_error("CloseHandle()");
+        intern->hComm = NULL;
+    }
 }
 
 void
