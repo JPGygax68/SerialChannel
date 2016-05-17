@@ -26,6 +26,7 @@ THE SOFTWARE.
 #include <vector>
 #include <stdexcept>
 #include <cmath>
+#include <chrono>
 #include <boost/circular_buffer.hpp>
 #include <boost/thread.hpp>
 #include <boost/thread/mutex.hpp>
@@ -133,6 +134,7 @@ SerialChannel::open()
     if(!BuildCommDCB(spec.c_str(), &dcb)) throw winapi_error("BuildCommDCB()");
     dcb.fBinary = true;
 	/*
+
     dcb.BaudRate     	= baud;
 	dcb.fParity      	= (parity != 0) ? TRUE : FALSE;
 	dcb.fBinary      	= TRUE;
@@ -190,9 +192,10 @@ SerialChannel::send(const byte_t *buffer, size_t size)
 {
     auto *intern = static_cast<InternalStruct*>(_intern);
 
-    if (intern->output_error.size() > 0) throw runtime_error(string("SerialChannel sending error: ")+intern->input_error);
+    if (intern->output_error.size() > 0) throw runtime_error(string("SerialChannel sending error: ") + intern->input_error);
 
-    mutex::scoped_lock(output_mutex);
+    auto lock = mutex::scoped_lock{ intern->output_mutex };
+    //mutex::scoped_lock(output_mutex);
 
     if (intern->output_buffer.size() + size >= intern->output_buffer.capacity())
         throw runtime_error("Output buffer capacity exceeded");
@@ -209,7 +212,8 @@ SerialChannel::retrieve(size_t max_bytes)
 
     if (intern->input_error.size() > 0) throw runtime_error(string("SerialChannel receiving error: ")+intern->input_error);
 
-    mutex::scoped_lock(input_mutex);
+    auto lock = mutex::scoped_lock{  intern->input_mutex };
+    //mutex::scoped_lock(output_mutex);
 
     size_t size = (max_bytes > 0) ? min(max_bytes, intern->input_buffer.size()) : intern->input_buffer.size();
     vector<BYTE> buffer(size);
